@@ -101,8 +101,8 @@ def learner(env, widths, seed, cfg):
 
 
 def run_arm(root, label, seed):
-    sys.path.insert(0, str(ROOT.parent / 'gym-warp'))
-    from warp_spike.vecenv import WarpOuterVecEnv
+    sys.path.insert(0, '/home/sra/prajwal/vroom')
+    from warp_backend.vecenv import WarpOuterVecEnv
     root = Path(root)
     p = verify(root)
     cfg = read(root / 'config.json')
@@ -255,7 +255,7 @@ def verify(output):
         base = rel[5:] if rel.startswith('warp:') else rel
         cand = ROOT / base
         if not cand.exists():
-            cand = Path('/home/sra/prajwal/fyp/gym-warp') / base
+            cand = Path('/home/sra/prajwal/vroom/warp_backend') / Path(base).name
         if sha(cand) != digest:
             raise ValueError(f'Changed source {rel}')
     return p
