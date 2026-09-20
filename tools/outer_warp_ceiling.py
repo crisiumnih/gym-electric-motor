@@ -120,7 +120,8 @@ def run_arm(root, label, seed):
     case = cfg['training_case']
     venv = WarpOuterVecEnv(cfg['plant'], cfg['inner_study'], inner_cuda_holder(inner), case, n_envs=1,
                            seed=seed, reward_shape=cfg['reward'].get('shape', 'l2'),
-                           failure=cfg['reward'].get('failure', -1040.0))
+                           failure=cfg['reward'].get('failure', -1040.0),
+                           effort_scale=cfg['reward'].get('effort_scale', 1.0))
     started = time.perf_counter()
     manifest = dict(status='running', label=label, seed=seed, protocol_sha256=sha(root / 'protocol.json'),
         inner_model_sha256=sha(root / 'inner_model.zip'))
@@ -169,7 +170,8 @@ def inner_cuda_holder(inner_cpu):
 
 
 def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x3', '512x3'),
-            validation_every=50000, max_workers=4):
+            validation_every=50000, max_workers=4, reward_extra=None, protocol_name=None,
+            interpretation_note=''):
     import shutil
     output, inner = Path(output).resolve(), Path(inner).resolve()
     widths = list(widths)
@@ -202,11 +204,11 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
                       speed_scale_rad_s=25., current_scale_a=4., reference_limit_a=1.5, memory_time_s=.5,
                       phase_limit_a=4.,
                       features=['speed', 'reference', 'error', 'id', 'iq', 'previous_own_command', 'bounded_error_memory']),
-        reward=dict(shape='l1', failure=FAILURE,
+        reward=dict(shape='l1', failure=FAILURE, **(reward_extra or {}),
                     interpretation='L1 absolute tracking + shared failure penalty, g0995 lineage'),
         validation_every=validation_every, total_timesteps=budget,
         interpretation=('Warp-training/GEM-validation ceiling screen; gamma .995/L1/-5200 from g0995 winner; '
-                        'longer budget + wider capacity; new lineage, no CPU-run comparison'))
+                        'longer budget + wider capacity; new lineage, no CPU-run comparison' + interpretation_note))
     save(output / 'config.json', cfg)
     import importlib.metadata
     from benchmarks.bldc.run import provenance
@@ -219,7 +221,7 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
         if not cand.exists():
             cand = Path('/home/sra/prajwal/fyp/gym-warp') / rel
         p['source_sha256']['warp:' + rel] = sha(cand)
-    p.update(protocol=PROTOCOL, seeds=list(seeds), widths=widths, max_workers=max_workers,
+    p.update(protocol=protocol_name or PROTOCOL, seeds=list(seeds), widths=widths, max_workers=max_workers,
         budget=budget, max_outer_actions=len(widths) * len(seeds) * budget,
         max_training_physics_steps=10 * len(widths) * len(seeds) * budget,
         device=dict(learner='cuda', inner='cuda', physics='warp-cuda', validation='gem-cpu'),
