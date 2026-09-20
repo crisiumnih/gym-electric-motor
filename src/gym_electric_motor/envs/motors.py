@@ -3,7 +3,7 @@ from enum import Enum
 
 MotorType = Enum(
     "MotorType",
-    ["PermanentlyExcitedDcMotor", "ExternallyExcitedDcMotor", "SeriesDc", "ShuntDc", "ExternallyExcitedSynchronousMotor", "DoublyFedInductionMotor", "SquirrelCageInductionMotor", "PermanentMagnetSynchronousMotor", "SynchronousReluctanceMotor", "SixPhasePMSM"],
+    ["PermanentlyExcitedDcMotor", "ExternallyExcitedDcMotor", "SeriesDc", "ShuntDc", "ExternallyExcitedSynchronousMotor", "DoublyFedInductionMotor", "SquirrelCageInductionMotor", "PermanentMagnetSynchronousMotor", "SynchronousReluctanceMotor", "SixPhasePMSM", "BrushlessDCMotor"],
 )
 MotorType.PermanentlyExcitedDcMotor.states = ["omega", "torque", "i", "u"]
 MotorType.ExternallyExcitedDcMotor.states = [
@@ -40,6 +40,9 @@ MotorType.SynchronousReluctanceMotor.states = [
 MotorType.SixPhasePMSM.states = ["omega" , "torque", "i_a1", "i_b1", "i_c1", "i_a2", "i_b2", "i_c2", "i_sd", "i_sq",
     "i_sx", "i_sy", "u_a1", "u_b1", "u_c1", "u_a2", "u_b2", "u_c2", "u_sd", "u_sq", "u_sx", "u_sy","epsilon",
 ]
+MotorType.BrushlessDCMotor.states = [
+    "omega", "torque", "i_a", "i_b", "i_c", "i_sd", "i_sq", "u_a", "u_b", "u_c", "u_sd", "u_sq", "epsilon"
+]
 
 
 # add env_id_tag if you dont want to use enum name as env_id
@@ -51,6 +54,7 @@ MotorType.SquirrelCageInductionMotor.env_id_tag = "SCIM"
 MotorType.PermanentMagnetSynchronousMotor.env_id_tag = "PMSM"
 MotorType.SynchronousReluctanceMotor.env_id_tag = "SynRM"
 MotorType.SixPhasePMSM.env_id_tag = "SIXPMSM"
+MotorType.BrushlessDCMotor.env_id_tag = "BLDC"
 
 ControlType = Enum("ControlType", ["SpeedControl", "TorqueControl", "CurrentControl"])
 ControlType.SpeedControl.env_id_tag = "SC"

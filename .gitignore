@@ -35,3 +35,23 @@ saved_plots/
 
 # debug files
 */debug.ipynb
+
+# FYP project hygiene — keep fork plant-only, RL pipeline lives in vroom
+results/
+TRANSFER/
+lit/
+*.pdf
+.venv/
+__pycache__/
+*.pyc
+*.zip
+*.pkl
+*.npz
+*.csv.gz
+*.csv
+metrics.json
+status.json
+queue_status.json
+manifest.json
+validation.jsonl
+physical_samples.jsonl

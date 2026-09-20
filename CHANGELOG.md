@@ -6,6 +6,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 ## Added
+- Brushless DC motor (BLDC) environment 'Cont-SC-BLDC-v0' with trapezoidal back-EMF phase-variable model (Pillay & Krishnan 1989), including:
+  - `BrushlessDCMotor` (phase-variable ODE, dq-aligned trapezoidal BEMF, optional BEMF corner smoothing)
+  - `BrushlessDCMotorSystem` (state layout identical to the PMSM system, continuous dq or abc action space)
+  - `ContSpeedControlBrushlessDCMotorEnv` with Antigravity KV100 default parameters
+  - tests for the motor model and the environment
+  - `docs/bldc_model.md` (equations and notation reference for the thesis) and `docs/bldc_verification.md` (verification figures and numbers)
+  - example `examples/bldc/cont_sc_bldc_example.py` and verification plot script `examples/bldc/plot_bldc_verification.py`
 ## Changed
 ## Fixed
 

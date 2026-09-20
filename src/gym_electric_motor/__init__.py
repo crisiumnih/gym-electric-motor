@@ -163,6 +163,13 @@ register(
     **registration_kwargs,
 )
 
+# Brushless DC Motor Environments
+register(
+    id="Cont-SC-BLDC-v0",
+    entry_point=envs_path + "ContSpeedControlBrushlessDCMotorEnv",
+    **registration_kwargs,
+)
+
 # Externally Excited Synchronous Motor Environments
 register(
     id="Finite-SC-EESM-v0",
