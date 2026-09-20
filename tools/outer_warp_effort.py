@@ -89,6 +89,7 @@ def verify(output):
         c = read(output / group / 'config.json')
         if c['reward'].pop('effort_scale') != float(group[1:]):
             raise ValueError('Wrong effort dispatch')
+        c.pop('interpretation')  # documents its own arm; dispatch enforced above
         configs[group] = c
     base = next(iter(configs.values()))
     if any(c != base for c in configs.values()):
