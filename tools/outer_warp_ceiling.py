@@ -113,11 +113,11 @@ def learner(env, widths, seed, cfg):
         policy_kwargs=dict(net_arch=dict(pi=widths, qf=c['critic_widths']), activation_fn=torch.nn.ReLU))
 
 
-def run_arm(root, label, seed):
+def run_arm(root, label, seed, protocol=PROTOCOL):
     sys.path.insert(0, str(warp_backend_root().parent))
     from warp_backend.vecenv import WarpOuterVecEnv
     root = Path(root)
-    p = verify(root)
+    p = verify(root, protocol)
     cfg = read(root / 'config.json')
     if (label, seed) not in [(r['label'], r['seed']) for r in p['records']]:
         raise ValueError('Undeclared job')
@@ -134,7 +134,9 @@ def run_arm(root, label, seed):
     venv = WarpOuterVecEnv(cfg['plant'], cfg['inner_study'], inner_cuda_holder(inner), case[0], n_envs=cfg['n_envs'],
                            seed=seed, reward_shape=cfg['reward'].get('shape', 'l2'),
                            failure=cfg['reward'].get('failure', -1040.0),
-                           effort_scale=cfg['reward'].get('effort_scale', 1.0), cases=case)
+                           effort_scale=cfg['reward'].get('effort_scale', 1.0), cases=case,
+                           memory_divisor=cfg['reward'].get('memory_divisor', 0.5),
+                           memory_cost=cfg['reward'].get('memory_cost', 0.5))
     started = time.perf_counter()
     manifest = dict(status='running', label=label, seed=seed, protocol_sha256=sha(root / 'protocol.json'),
         inner_model_sha256=sha(root / 'inner_model.zip'))
@@ -257,12 +259,12 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
     return p
 
 
-def verify(output):
+def verify(output, protocol=PROTOCOL):
     output = Path(output)
     p = read(output / 'protocol.json')
     if sha(output / 'protocol.json') != (output / 'protocol.sha256').read_text().strip():
         raise ValueError('Changed ceiling protocol')
-    if p.get('protocol') != PROTOCOL:
+    if p.get('protocol') != protocol:
         raise ValueError('Not a ceiling protocol')
     import importlib.metadata
     for package, version in p['packages'].items():
@@ -283,9 +285,9 @@ def verify(output):
     return p
 
 
-def execute(output, workers=None):
+def execute(output, workers=None, protocol=PROTOCOL):
     output = Path(output).resolve()
-    p = verify(output)
+    p = verify(output, protocol)
     workers = workers or p.get('max_workers', 4)
     with (output / 'queue_started.json').open('x') as f:
         json.dump(dict(started_utc=now()), f)
@@ -307,7 +309,7 @@ def execute(output, workers=None):
                 with (output / 'logs' / f"{r['arm']}.log").open('x') as log:
                     process = subprocess.run(
                         [sys.executable, '-m', 'tools.outer_warp_ceiling', 'run', '--output', str(output),
-                         '--label', r['label'], '--seed', str(r['seed'])],
+                         '--label', r['label'], '--seed', str(r['seed']), '--protocol', protocol],
                         cwd=ROOT, stdout=log, stderr=subprocess.STDOUT)
                 return dict(**r, returncode=process.returncode, started_utc=started, completed_utc=now())
             except Exception as exc:
@@ -323,7 +325,7 @@ def execute(output, workers=None):
         save(output / 'run_summary.json', results)
         if any(r['returncode'] for r in results):
             raise RuntimeError('Failed job; no aggregate selection')
-        select(output)
+        select(output, protocol)
         atomic(output / 'status.json', dict(status='completed', completed_utc=now()))
     except BaseException as exc:
         atomic(output / 'status.json', dict(status='failed',
@@ -331,9 +333,9 @@ def execute(output, workers=None):
         raise
 
 
-def select(output):
+def select(output, protocol=PROTOCOL):
     output = Path(output)
-    p = verify(output)
+    p = verify(output, protocol)
     if (output / 'selection.json').exists():
         raise FileExistsError('Selection already committed')
     queue = read(output / 'run_summary.json')
@@ -367,7 +369,7 @@ def select(output):
                       for r in rows if r['label'] == min(scores, key=scores.get)))
     save(output / 'selection.json', result)
     (output / 'selection.sha256').write_text(sha(output / 'selection.json') + '\n')
-    lines = ['# Outer warp ceiling development comparison', '',
+    lines = [f'# Outer {protocol} development comparison', '',
              f"Validation-ranked width: {result['winner']}. No final qualification.", '',
              '| Width | Seed | Selected step | Cases passed | Speed RMSE rad/s |', '|---|---:|---:|---:|---:|']
     for row in rows:
@@ -385,15 +387,17 @@ def main():
     ap.add_argument('--label')
     ap.add_argument('--seed', type=int)
     ap.add_argument('--workers', type=int, default=None)
+    ap.add_argument('--protocol', default=None)
     a = ap.parse_args()
+    proto = a.protocol or PROTOCOL
     if a.command == 'prepare':
         prepare(a.output, a.inner)
     elif a.command == 'run':
-        run_arm(a.output, a.label, a.seed)
+        run_arm(a.output, a.label, a.seed, proto)
     elif a.command == 'execute':
-        execute(a.output, a.workers)
+        execute(a.output, a.workers, proto)
     else:
-        select(a.output)
+        select(a.output, proto)
 
 
 if __name__ == '__main__':
