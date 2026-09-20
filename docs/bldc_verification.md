@@ -1,7 +1,7 @@
 # BLDC Model Verification
 
 **Scope:** evidence that the BLDC model in `gym-electric-motor` implements the equations of
-`docs/bldc_model.md` correctly. All figures in `docs/plots/bldc/`, all numbers below are
+`docs/bldc_model.md` correctly. All figures in `figures/bldc/`, all numbers below are
 reproducible with the commands at the end.
 
 **Status:** v2 — all checks pass; one modeling gap found and fixed during verification

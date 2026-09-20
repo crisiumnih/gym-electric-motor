@@ -2,7 +2,7 @@
 Generate the BLDC model verification figures for the thesis.
 
 Runs a set of physics checks against the BrushlessDCMotor implementation and renders
-publication-ready figures into ``docs/plots/bldc/``:
+publication-ready figures into ``figures/bldc/`` (tracked by git; ``docs/plots`` is ignored upstream):
 
     1.  fig_bemf_shape.png            trapezoidal back-EMF shape functions (sharp + smoothed)
     2.  fig_bemf_dq_alignment.png     dq alignment sweep + instantaneous (e_d, e_q) over a cycle
@@ -30,7 +30,7 @@ import gym_electric_motor as gem
 from gym_electric_motor.physical_systems import BrushlessDCMotor
 
 REPO_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-OUT_DIR = os.path.join(REPO_ROOT, "docs", "plots", "bldc")
+OUT_DIR = os.path.join(REPO_ROOT, "figures", "bldc")
 os.makedirs(OUT_DIR, exist_ok=True)
 
 plt.rcParams.update(
