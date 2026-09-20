@@ -219,7 +219,7 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
     for rel in WARP_SOURCES + ['tools/outer_horizon_study.py', 'tools/outer_reward_study.py']:
         cand = ROOT / rel
         if not cand.exists():
-            cand = Path('/home/sra/prajwal/fyp/gym-warp') / rel
+            cand = Path('/home/sra/prajwal/vroom/warp_backend') / Path(rel).name
         p['source_sha256']['warp:' + rel] = sha(cand)
     p.update(protocol=protocol_name or PROTOCOL, seeds=list(seeds), widths=widths, max_workers=max_workers,
         budget=budget, max_outer_actions=len(widths) * len(seeds) * budget,
