@@ -1,0 +1,18 @@
+{
+  "protocol_version": "bldc-pi-v1",
+  "tau_s": 0.0001,
+  "seeds": [0],
+  "motor": {"p": 21, "r_s": 0.085, "l_s": 0.00005, "k_e": 0.0955, "j_rotor": 0.0001, "bemf_smoothing": 0.0},
+  "load": {"a": 0.01, "b": 0.01, "c": 0.0, "j_load": 0.0029},
+  "supply_v": 44.4,
+  "solver": {"integrator": "dopri5", "rtol": 1e-7, "atol": 1e-9, "nsteps": 10000},
+  "action_norm_limit": 0.12,
+  "controller": {"name": "pi_initial", "kp": 0.001, "ki_per_s": 0.05},
+  "metrics": {"settling_fraction": 0.02, "absolute_band_rad_s": 0.05, "minimum_hold_s": 0.1, "tail_window_s": 0.2, "torque_mean_floor_nm": 0.001},
+  "scenarios": [
+    {"name": "startup", "duration_s": 2.0, "reference": [[0.0, 0.0], [0.1, 10.0]], "disturbance": [[0.0, 0.0]]},
+    {"name": "speed_steps", "duration_s": 4.5, "reference": [[0.0, 0.0], [0.1, 10.0], [1.5, 20.0], [3.0, 5.0]], "disturbance": [[0.0, 0.0]]},
+    {"name": "load_step", "duration_s": 3.0, "reference": [[0.0, 0.0], [0.1, 10.0]], "disturbance": [[0.0, 0.0], [1.5, 0.08]]},
+    {"name": "load_pulse", "duration_s": 3.0, "reference": [[0.0, 0.0], [0.1, 10.0]], "disturbance": [[0.0, 0.0], [1.5, 0.08], [1.8, 0.0]]}
+  ]
+}
