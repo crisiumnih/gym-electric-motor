@@ -105,8 +105,10 @@ class Progress(BaseCallback):
 
 
 def learner(env, widths, seed, cfg):
+    from stable_baselines3 import TD3
     c = cfg['learner']
-    return DDPG('MlpPolicy', env, seed=seed, device=c.get('device', 'cuda'), learning_rate=c['learning_rate'],
+    algo = TD3 if c.get('algorithm', 'ddpg') == 'td3' else DDPG
+    return algo('MlpPolicy', env, seed=seed, device=c.get('device', 'cuda'), learning_rate=c['learning_rate'],
         gamma=c['gamma'], tau=c['tau'], buffer_size=c['buffer_size'], learning_starts=c['learning_starts'],
         batch_size=c['batch_size'], train_freq=c['train_freq'], gradient_steps=c['gradient_steps'],
         action_noise=NormalActionNoise(np.zeros(1), np.ones(1) * c['noise_sigma']),
@@ -136,7 +138,9 @@ def run_arm(root, label, seed, protocol=PROTOCOL):
                            failure=cfg['reward'].get('failure', -1040.0),
                            effort_scale=cfg['reward'].get('effort_scale', 1.0), cases=case,
                            memory_divisor=cfg['reward'].get('memory_divisor', 0.5),
-                           memory_cost=cfg['reward'].get('memory_cost', 0.5))
+                           memory_cost=cfg['reward'].get('memory_cost', 0.5),
+                           smooth_alpha=cfg['reward'].get('smooth_alpha', 1.0),
+                           quad_weight=cfg['reward'].get('quad_weight', 100.0))
     started = time.perf_counter()
     manifest = dict(status='running', label=label, seed=seed, protocol_sha256=sha(root / 'protocol.json'),
         inner_model_sha256=sha(root / 'inner_model.zip'))
@@ -223,7 +227,7 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
                       speed_scale_rad_s=25., current_scale_a=4., reference_limit_a=1.5, memory_time_s=.5,
                       phase_limit_a=4.,
                       features=['speed', 'reference', 'error', 'id', 'iq', 'previous_own_command', 'bounded_error_memory']),
-        reward=dict(shape='l1', failure=FAILURE, **(reward_extra or {}),
+        reward=dict(failure=FAILURE, **{**{'shape': 'l1'}, **(reward_extra or {})},
                     interpretation='L1 absolute tracking + shared failure penalty, g0995 lineage'),
         validation_every=validation_every * n_envs, total_timesteps=budget * n_envs,
         n_envs=n_envs, per_env_timesteps=budget,
