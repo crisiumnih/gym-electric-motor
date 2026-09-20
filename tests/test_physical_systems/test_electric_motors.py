@@ -16,7 +16,8 @@ from gym_electric_motor.physical_systems.electric_motors import (
     SynchronousReluctanceMotor,
     ExternallyExcitedSynchronousMotor,
     PermanentMagnetSynchronousMotor,
-    SixPhasePMSM
+    SixPhasePMSM,
+    BrushlessDCMotor,
 )
 from gym_electric_motor.physical_systems.electric_motors.six_phase_motor import SixPhaseMotor
 from gymnasium.spaces import Box
@@ -1315,3 +1316,146 @@ def test_SixPMSM_reset():
      defaultSixPhasePMSM._initial_states = new_initial_state
      defaultSixPhasePMSM.reset(defaultSixPhasePMSM_state_space,defaultSixPhasePMSM_state_positions)
      assert defaultSixPhasePMSM._initial_states == new_initial_state
+
+
+# ---------------------------------------------------------------------------
+# Brushless DC Motor
+# ---------------------------------------------------------------------------
+
+def test_BrushlessDCMotor_parameter():
+    defaultBLDCMotor = BrushlessDCMotor()
+    mp = defaultBLDCMotor._motor_parameter
+    assert mp["p"] == 21
+    assert mp["r_s"] == 85e-3
+    assert mp["k_e"] == 0.0955
+    assert defaultBLDCMotor.CURRENTS == ["i_a", "i_b", "i_c"]
+    assert defaultBLDCMotor.VOLTAGES == ["u_a", "u_b", "u_c"]
+    assert defaultBLDCMotor.CURRENTS_IDX == [0, 1, 2]
+    assert defaultBLDCMotor.EPSILON_IDX == 3
+
+
+def test_BrushlessDCMotor_backemf_shape():
+    defaultBLDCMotor = BrushlessDCMotor()
+    # Phase a: trapezoid shifted by +150 deg: flat -1 on [30, 150] deg, flat +1 on [210, 330] deg,
+    # zero crossings at 0 and 180 deg (falling/rising)
+    angles = np.deg2rad([0, 15, 30, 45, 90, 150, 180, 195, 210, 270, 330, 345])
+    f_a = defaultBLDCMotor.bemf_shape(angles)[0]
+    np.testing.assert_allclose(
+        f_a,
+        [0.0, -0.5, -1.0, -1.0, -1.0, -1.0, 0.0, 0.5, 1.0, 1.0, 1.0, 0.5],
+        atol=1e-12,
+    )
+    # the 60 deg transitions are linear (evaluate inside the first ramp: 0..30 deg)
+    f_lin = defaultBLDCMotor.bemf_shape(np.deg2rad([10.0, 20.0]))[0]
+    np.testing.assert_allclose(f_lin, [-1.0 / 3.0, -2.0 / 3.0], atol=1e-12)
+    # phase offsets of 120 deg electrical
+    f_b = defaultBLDCMotor.bemf_shape(angles)[1]
+    np.testing.assert_allclose(f_b, defaultBLDCMotor.bemf_shape(angles - 2 * np.pi / 3)[0], atol=1e-12)
+    f_c = defaultBLDCMotor.bemf_shape(angles)[2]
+    np.testing.assert_allclose(f_c, defaultBLDCMotor.bemf_shape(angles - 4 * np.pi / 3)[0], atol=1e-12)
+    # alignment: the BEMF fundamental lies purely on the q-axis of the Park transform
+    theta = np.linspace(0, 2 * np.pi, 20001, endpoint=False)
+    f = defaultBLDCMotor.bemf_shape(theta)
+    f_ab = defaultBLDCMotor.t_23(f)
+    e_d = np.mean(f_ab[0] * np.cos(theta) + f_ab[1] * np.sin(theta))
+    e_q = np.mean(-f_ab[0] * np.sin(theta) + f_ab[1] * np.cos(theta))
+    assert abs(e_d) < 1e-9
+    assert e_q > 1.0
+
+
+def test_BrushlessDCMotor_backemf():
+    defaultBLDCMotor = BrushlessDCMotor()
+    mp = defaultBLDCMotor._motor_parameter
+    state = np.array([0.0, 0.0, 0.0, 0.0])  # eps=0 -> f_a=0, f_b=1, f_c=-1
+    omega = 100.0
+    e = defaultBLDCMotor.back_emf(state, omega)
+    np.testing.assert_allclose(e, mp["k_e"] * omega * np.array([0.0, 1.0, -1.0]), atol=1e-12)
+
+
+def test_BrushlessDCMotor_el_ode():
+    defaultBLDCMotor = BrushlessDCMotor()
+    mp = defaultBLDCMotor._motor_parameter
+    # steady state at standstill: i = u / r_s
+    u = np.array([1.0, -0.5, -0.5])
+    state = np.array([u[0] / mp["r_s"], u[1] / mp["r_s"], u[2] / mp["r_s"], 0.0])
+    di = defaultBLDCMotor.electrical_ode(state, u, 0.0)[:3]
+    np.testing.assert_allclose(di, 0.0, atol=1e-12)
+    # steady state at speed: i = (u - e) / r_s
+    omega = 100.0
+    e = defaultBLDCMotor.back_emf(state, omega)
+    state_moving = np.array([(u[i] - e[i]) / mp["r_s"] for i in range(3)] + [0.0])
+    di_moving = defaultBLDCMotor.electrical_ode(state_moving, u, omega)[:3]
+    np.testing.assert_allclose(di_moving, 0.0, atol=1e-9)
+    # electrical angle dynamics: d(epsilon)/dt = p * omega
+    deps = defaultBLDCMotor.electrical_ode(np.zeros(4), np.zeros(3), omega)[3]
+    assert deps == mp["p"] * omega
+
+
+def test_BrushlessDCMotor_star_connection():
+    # the floating neutral potential keeps the common-mode current identically zero,
+    # also for unbalanced states and the nonzero common-mode back-EMF of the trapezoid
+    defaultBLDCMotor = BrushlessDCMotor()
+    rng = np.random.default_rng(7)
+    for _ in range(20):
+        state = rng.uniform(-20, 20, 4)
+        u = rng.uniform(-20, 20, 3)
+        omega = rng.uniform(-200, 200)
+        di = defaultBLDCMotor.electrical_ode(state, u, omega)[:3]
+        assert abs(np.sum(di)) < 1e-6
+    # a common-mode voltage drives no current: only the neutral potential shifts
+    state = np.zeros(4)
+    di = defaultBLDCMotor.electrical_ode(state, np.ones(3) * 5.0, 0.0)[:3]
+    np.testing.assert_allclose(di, 0.0, atol=1e-12)
+
+
+def test_BrushlessDCMotor_torque():
+    defaultBLDCMotor = BrushlessDCMotor()
+    mp = defaultBLDCMotor._motor_parameter
+    # torque from instantaneous power balance: T * omega == sum(e_j * i_j)
+    rng = np.random.default_rng(42)
+    for _ in range(10):
+        state = rng.uniform(-10, 10, 4)
+        omega = rng.uniform(-200, 200)
+        e = defaultBLDCMotor.back_emf(state, omega)
+        T = defaultBLDCMotor.torque(state)
+        assert abs(T * omega - np.sum(e * state[:3])) < 1e-9 * abs(omega) + 1e-12
+    # torque is linear in the currents with constant k_e weighting by the shape functions
+    state = np.array([2.0, 3.0, -5.0, 0.0])
+    T_expected = mp["k_e"] * np.sum(defaultBLDCMotor.bemf_shape(0.0) * state[:3])
+    assert defaultBLDCMotor.torque(state) == T_expected
+
+
+def test_BrushlessDCMotor_torque_limit():
+    defaultBLDCMotor = BrushlessDCMotor()
+    mp = defaultBLDCMotor._motor_parameter
+    assert defaultBLDCMotor._torque_limit() == 2.0 * mp["k_e"] * defaultBLDCMotor.limits["i"]
+
+
+def test_BrushlessDCMotor_limits():
+    defaultBLDCMotor = BrushlessDCMotor()
+    # per-phase voltage limit is half the general voltage limit (symmetric B6 bridge)
+    assert defaultBLDCMotor.limits["u_a"] == 0.5 * defaultBLDCMotor.limits["u"]
+    assert defaultBLDCMotor.limits["u_sq"] == 0.5 * defaultBLDCMotor.limits["u"]
+    # current limits default to the general current limit
+    assert defaultBLDCMotor.limits["i_a"] == defaultBLDCMotor.limits["i"]
+    assert defaultBLDCMotor.limits["i_sd"] == defaultBLDCMotor.limits["i"]
+
+
+def test_BrushlessDCMotor_smoothing():
+    # the smoothing parameter preserves the plateau values and the shape of the trapezoid
+    sharp = BrushlessDCMotor()
+    smooth = BrushlessDCMotor({"bemf_smoothing": 1.0})
+    theta = np.linspace(0, 2 * np.pi, 10001, endpoint=True)
+    f_s = smooth.bemf_shape(theta)[0]
+    # plateau regions are preserved exactly (smoothing only affects the 60 deg ramps)
+    flat_neg = (theta >= np.deg2rad(30.0) + 1e-3) & (theta < np.deg2rad(150.0) - 1e-3)
+    flat_pos = (theta >= np.deg2rad(210.0) + 1e-3) & (theta < np.deg2rad(330.0) - 1e-3)
+    np.testing.assert_allclose(f_s[flat_neg], -1.0, atol=1e-9)
+    np.testing.assert_allclose(f_s[flat_pos], 1.0, atol=1e-9)
+    # half-wave symmetry is preserved: f(theta + pi) = -f(theta)
+    np.testing.assert_allclose(f_s[:5000], -f_s[10000:5000:-1], atol=1e-9)
+    # zero crossing at theta = 0
+    assert abs(f_s[0]) < 1e-6
+    # smoothing stays close to the sharp trapezoid (same endpoints, monotone ramps)
+    f_sharp = sharp.bemf_shape(theta)[0]
+    assert np.max(np.abs(f_s - f_sharp)) < 0.2

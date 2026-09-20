@@ -102,6 +102,9 @@ from .gym_pmsm.finite_sc_pmsm_env import (
 from .gym_pmsm.finite_tc_pmsm_env import (
     FiniteTorqueControlPermanentMagnetSynchronousMotorEnv,
 )
+from .gym_bldc.cont_sc_bldc_env import (
+    ContSpeedControlBrushlessDCMotorEnv,
+)
 from .gym_synrm.cont_cc_synrm_env import ContCurrentControlSynchronousReluctanceMotorEnv
 from .gym_synrm.cont_sc_synrm_env import ContSpeedControlSynchronousReluctanceMotorEnv
 from .gym_synrm.cont_tc_synrm_env import ContTorqueControlSynchronousReluctanceMotorEnv

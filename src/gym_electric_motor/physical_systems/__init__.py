@@ -24,6 +24,7 @@ from .converters import FiniteMultiConverter as FiniteMulti
 from .converters import FiniteOneQuadrantConverter as Finite1QC
 from .converters import FiniteTwoQuadrantConverter as Finite2QC
 from .electric_motors import (
+    BrushlessDCMotor,
     DcExternallyExcitedMotor,
     DcPermanentlyExcitedMotor,
     DcSeriesMotor,
@@ -44,6 +45,7 @@ from .mechanical_loads import (
     PolynomialStaticLoad,
 )
 from .physical_systems import (
+    BrushlessDCMotorSystem,
     DcMotorSystem,
     DoublyFedInductionMotorSystem,
     ExternallyExcitedSynchronousMotorSystem,

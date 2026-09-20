@@ -1,6 +1,9 @@
 # Electric Motor Base Class
 from .dc_externally_excited_motor import DcExternallyExcitedMotor
 
+# Brushless DC Motors
+from .brushless_dc_motor import BrushlessDCMotor
+
 # DC Motors
 from .dc_motor import DcMotor
 from .dc_permanently_excited_motor import DcPermanentlyExcitedMotor

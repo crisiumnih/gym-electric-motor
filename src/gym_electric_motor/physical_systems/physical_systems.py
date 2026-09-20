@@ -561,6 +561,106 @@ class SynchronousMotorSystem(ThreePhaseMotorSystem):
         return system_state / self._limits
 
 
+class BrushlessDCMotorSystem(SynchronousMotorSystem):
+    """
+    SCML-System that can be used with the brushless DC motor (BLDC).
+
+    The state vector layout is identical to the :py:class:`.SynchronousMotorSystem`
+    (``[omega, torque, i_a, i_b, i_c, i_sd, i_sq, u_a, u_b, u_c, u_sd, u_sq, epsilon, u_sup]``)
+    so that environments and RL agents built for the PMSM can be used unchanged. The
+    difference is that the BLDC motor ODE lives in the phase-variable (abc) frame: the
+    motor's back-EMF is trapezoidal, hence the dq transformed quantities reported in the
+    state vector are derived from the abc quantities via the Clarke/Park transform and are
+    used for observation only (see :py:class:`.BrushlessDCMotor`).
+
+    The action space is continuous dq voltage by default (``control_space='dq'``, two
+    dimensional) and is transformed to abc before it is applied to the converter; the
+    classic three dimensional abc action space is available via ``control_space='abc'``.
+    """
+
+    def __init__(self, control_space="dq", **kwargs):
+        """
+        Args:
+            control_space(str):('abc' or 'dq') Choose, if the actions space is in dq or abc space.
+                Default: 'dq'
+            kwargs: Further arguments to pass to SynchronousMotorSystem
+        """
+        super().__init__(**kwargs)
+        self.control_space = control_space
+        if control_space == "dq":
+            assert (
+                type(self._converter.action_space) == Box
+            ), "dq-control space is only available for Continuous Controlled Converters"
+            self._action_space = Box(-1, 1, shape=(2,), dtype=np.float64)
+
+    def simulate(self, action, *_, **__):
+        # Docstring of superclass
+        ode_state = self._ode_solver.y
+        eps = ode_state[self._ode_epsilon_idx]
+        if self.control_space == "dq":
+            action = self.dq_to_abc_space(action, eps)
+        i_in = self._electrical_motor.i_in(ode_state[self._ode_currents_idx])
+        switching_times = self._converter.set_action(action, self._t)
+
+        for t in switching_times[:-1]:
+            i_sup = self._converter.i_sup(i_in)
+            u_sup = self._supply.get_voltage(self._t, i_sup)
+            u_in = self._converter.convert(i_in, self._ode_solver.t)
+            u_in = [u * u_s for u in u_in for u_s in u_sup]
+            self._ode_solver.set_f_params(u_in)
+            ode_state = self._ode_solver.integrate(t)
+            eps = ode_state[self._ode_epsilon_idx]
+            i_in = self._electrical_motor.i_in(ode_state[self._ode_currents_idx])
+
+        i_sup = self._converter.i_sup(i_in)
+        u_sup = self._supply.get_voltage(self._t, i_sup)
+        u_in = self._converter.convert(i_in, self._ode_solver.t)
+        u_in = [u * u_s for u in u_in for u_s in u_sup]
+        self._ode_solver.set_f_params(u_in)
+        ode_state = self._ode_solver.integrate(self._t + self._tau)
+        self._t = self._ode_solver.t
+        self._k += 1
+        torque = self._electrical_motor.torque(ode_state[self._motor_ode_idx])
+        mechanical_state = ode_state[self._load_ode_idx]
+        i_abc = ode_state[self._ode_currents_idx]
+        eps = ode_state[self._ode_epsilon_idx] % (2 * np.pi)
+        if eps > np.pi:
+            eps -= 2 * np.pi
+        # The reported state belongs to the end of the integration interval. Use
+        # that angle for the derived dq observations, rather than the angle at
+        # the beginning of the interval.
+        i_dq = list(self.abc_to_dq_space(i_abc, eps))
+        u_dq = list(self.abc_to_dq_space(u_in, eps))
+
+        system_state = np.concatenate((mechanical_state, [torque], i_abc, i_dq, u_in, u_dq, [eps], u_sup))
+        return system_state / self._limits
+
+    def reset(self, *_):
+        # Docstring of superclass
+        motor_state = self._electrical_motor.reset(state_space=self.state_space, state_positions=self.state_positions)
+        mechanical_state = self._mechanical_load.reset(
+            state_positions=self.state_positions,
+            state_space=self.state_space,
+            nominal_state=self.nominal_state,
+        )
+        ode_state = np.concatenate((mechanical_state, motor_state))
+        u_sup = self.supply.reset()
+        eps = ode_state[self._ode_epsilon_idx]
+        if eps > np.pi:
+            eps -= 2 * np.pi
+        u_abc = self.converter.reset()
+        u_abc = [u * u_s for u in u_abc for u_s in u_sup]
+        i_abc = ode_state[self._ode_currents_idx]
+        i_dq = self.abc_to_dq_space(i_abc, eps)
+        u_dq = self.abc_to_dq_space(u_abc, eps)
+        torque = self.electrical_motor.torque(motor_state)
+        self._t = 0
+        self._k = 0
+        self._ode_solver.set_initial_value(ode_state, self._t)
+        system_state = np.concatenate((mechanical_state, [torque], i_abc, i_dq, u_abc, u_dq, [eps], u_sup))
+        return system_state / self._limits
+
+
 class ExternallyExcitedSynchronousMotorSystem(SynchronousMotorSystem):
     """SCML-System that can be used with the externally excited synchronous motor (EESM)"""
 

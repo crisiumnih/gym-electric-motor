@@ -6,27 +6,32 @@ from gym_electric_motor.core import (
     ReferenceGenerator,
     RewardFunction,
 )
-from gym_electric_motor.physical_systems.physical_systems import SynchronousMotorSystem
+from gym_electric_motor.physical_systems.physical_systems import BrushlessDCMotorSystem
 from gym_electric_motor.reference_generators import WienerProcessReferenceGenerator
 from gym_electric_motor.reward_functions import WeightedSumOfErrors
 from gym_electric_motor.utils import initialize
 from gym_electric_motor.visualization import MotorDashboard
 
 
-class ContSpeedControlPermanentMagnetSynchronousMotorEnv(ElectricMotorEnvironment):
+class ContSpeedControlBrushlessDCMotorEnv(ElectricMotorEnvironment):
     """
     Description:
-        Environment to simulate a abc-domain continuous control set speed controlled permanent magnet synchr. motor.
+        Environment to simulate a continuous control set speed controlled brushless DC motor (BLDC).
+
+        The BLDC motor model lives in the phase-variable (abc) frame with a piecewise-linear
+        trapezoidal back-EMF (Pillay & Krishnan 1989). The dq quantities of the state vector
+        are derived from the abc quantities and are for observation only. See
+        :py:class:`.BrushlessDCMotor` and :py:class:`.BrushlessDCMotorSystem`.
 
     Key:
-        ``'Cont-SC-PMSM-v0'``
+        ``'Cont-SC-BLDC-v0'``
 
     Default Components:
-        - Supply: :py:class:`.IdealVoltageSupply`
+        - Supply: :py:class:`.IdealVoltageSupply` (u_nominal=44.4 V, 12S)
         - Converter: :py:class:`.ContB6BridgeConverter`
-        - Motor: :py:class:`.PermanentMagnetSynchronousMotor`
+        - Motor: :py:class:`.BrushlessDCMotor` (T-Motor Antigravity KV100)
         - Load: :py:class:`.PolynomialStaticLoad`
-        - Ode-Solver: :py:class:`.EulerSolver`
+        - Ode-Solver: :py:class:`.ScipyOdeSolver`
 
         - Reference Generator: :py:class:`.WienerProcessReferenceGenerator` *Reference Quantity:* ``'omega'``
 
@@ -34,10 +39,10 @@ class ContSpeedControlPermanentMagnetSynchronousMotorEnv(ElectricMotorEnvironmen
 
         - Visualization: :py:class:`.MotorDashboard` current and action plots
 
-        - Constraints: :py:class:`.SquaredConstraint` on the currents  ``'i_sd', 'i_sq'``
+        - Constraints: :py:class:`.SquaredConstraint` on the currents ``'i_a', 'i_b', 'i_c'``
 
     State Variables:
-        ``['omega' , 'torque', 'i_sd', 'i_sq', 'i_a', 'i_b', 'i_c', 'u_sd', 'u_sq', 'u_a', 'u_b', 'u_c', 'u_sup']``
+        ``['omega' , 'torque', 'i_a', 'i_b', 'i_c', 'i_sd', 'i_sq', 'u_a', 'u_b', 'u_c', 'u_sd', 'u_sq', 'epsilon', 'u_sup']``
 
     Reference Variables:
         ``['omega']``
@@ -49,38 +54,21 @@ class ContSpeedControlPermanentMagnetSynchronousMotorEnv(ElectricMotorEnvironmen
         Type: Tuple(State_Space, Reference_Space)
 
     State Space:
-        Box(low=13 * [-1], high=13 * [1])
+        Box(low=14 * [-1], high=14 * [1])
 
     Reference Space:
         Box(low=[-1, -1], high=[1, 1])
 
     Action Space:
-        Box(low=[-1, -1, -1], high=[1, 1, 1])
+        Box(low=[-1, -1], high=[1, 1]) in dq control space (default, continuous voltage command)
 
     Initial State:
         Zeros on all state variables.
 
     Example:
         >>> import gym_electric_motor as gem
-        >>> from gym_electric_motor.reference_generators import LaplaceProcessReferenceGenerator
         >>>
-        >>> # Select a different ode_solver with default parameters by passing a keystring
-        >>> my_overridden_solver = 'scipy.solve_ivp'
-        >>>
-        >>> # Update the default arguments to the voltage supply by passing a parameter dict
-        >>> my_changed_voltage_supply_args = {'u_nominal': 400.0}
-        >>>
-        >>> # Replace the reference generator by passing a new instance
-        >>> my_new_ref_gen_instance = LaplaceProcessReferenceGenerator(
-        ...     reference_state='omega',
-        ...     sigma_range=(1e-3, 1e-2)
-        ... )
-        >>> env = gem.make(
-        ...     'Cont-SC-PMSM-v0',
-        ...     voltage_supply=my_changed_voltage_supply_args,
-        ...     ode_solver=my_overridden_solver,
-        ...     reference_generator=my_new_ref_gen_instance
-        ... )
+        >>> env = gem.make('Cont-SC-BLDC-v0')
         >>> terminated = True
         >>> for _ in range(1000):
         >>>     if terminated:
@@ -100,11 +88,11 @@ class ContSpeedControlPermanentMagnetSynchronousMotorEnv(ElectricMotorEnvironmen
         visualization=None,
         state_filter=None,
         callbacks=(),
-        constraints=(SquaredConstraint(("i_sq", "i_sd")),),
-        calc_jacobian=True,
+        constraints=(SquaredConstraint(("i_a", "i_b", "i_c")),),
+        calc_jacobian=False,
         tau=1e-4,
         physical_system_wrappers=(),
-        control_space="abc",
+        control_space="dq",
         **kwargs,
     ):
         """
@@ -123,15 +111,16 @@ class ContSpeedControlPermanentMagnetSynchronousMotorEnv(ElectricMotorEnvironmen
                 - instance of Constraint: More complex constraints (e.g. the SquaredConstraint can be initialized and
                  passed to the environment.
             calc_jacobian(bool): Flag, if the jacobian of the environment shall be taken into account during the
-                simulation. This may lead to speed improvements. Default: True
+                simulation. The BLDC motor does not provide a jacobian (trapezoidal back-EMF is piecewise),
+                so this should remain False. Default: False
             tau(float): Duration of one control step in seconds. Default: 1e-4.
             state_filter(list(str)): List of states that shall be returned to the agent. Default: None (no filter)
             callbacks(list(Callback)): Callbacks for user interaction. Default: ()
             physical_system_wrappers(list(PhysicalSystemWrapper)): List of Physical System Wrappers to modify the
             actions to and states from the physical system before they are used in the environment. Default: ()
-            control_space(str):('abc' or 'dq') Action space of the environment. Default: 'abc'
-                - 'abc': 3-dim continuous phase voltage command
+            control_space(str):('abc' or 'dq') Action space of the environment. Default: 'dq'
                 - 'dq': 2-dim continuous voltage command in dq space (transformed to abc internally)
+                - 'abc': 3-dim continuous phase voltage command
 
         Note on the env-arg type:
             All parameters of type env-arg can be selected as one of the following types:
@@ -146,10 +135,10 @@ class ContSpeedControlPermanentMagnetSynchronousMotorEnv(ElectricMotorEnvironmen
             This class is then initialized with its default parameters.
             The available strings can be looked up in the documentation. (e.g. ``converter='Finite-2QC'``)
         """
-        physical_system = SynchronousMotorSystem(
-            supply=initialize(ps.VoltageSupply, supply, ps.IdealVoltageSupply, dict(u_nominal=420.0)),
+        physical_system = BrushlessDCMotorSystem(
+            supply=initialize(ps.VoltageSupply, supply, ps.IdealVoltageSupply, dict(u_nominal=44.4)),
             converter=initialize(ps.PowerElectronicConverter, converter, ps.ContB6BridgeConverter, dict()),
-            motor=initialize(ps.ElectricMotor, motor, ps.PermanentMagnetSynchronousMotor, dict()),
+            motor=initialize(ps.ElectricMotor, motor, ps.BrushlessDCMotor, dict()),
             load=initialize(
                 ps.MechanicalLoad,
                 load,
