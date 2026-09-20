@@ -270,6 +270,7 @@ def select(output):
             or {(r['label'], r['seed']) for r in queue} != {(r['label'], r['seed']) for r in p['records']}
             or any(r['returncode'] for r in queue)):
         raise RuntimeError('Incomplete queue')
+    save(output / 'fix' / 'run_summary.json', [r for r in queue])
     original.select(output / 'fix')
     selected = read(output / 'fix' / 'selection.json')
     rows = [r for r in selected['rows']]

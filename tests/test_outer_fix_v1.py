@@ -78,7 +78,7 @@ def test_tiny_fix_train_select(tmp_path, monkeypatch):
     c = r.read(child / 'config.json')
     inner = DDPG.load(child / 'inner_model.zip', device='cpu')
     with r.environment():
-        r.original.evaluation.baselines(c['plant'], c['inner_study'], inner, c['validation_cases'], child / 'baselines')
+        r.evaluation.baselines(c['plant'], c['inner_study'], inner, c['validation_cases'], child / 'baselines')
     r.run(root, '128x2', 24)
     m = r.read(child / '128x2-seed24/manifest.json')
     assert m['status'] == 'completed' and m['gradient_updates'] > 0 and m['physics_steps'] == 400
