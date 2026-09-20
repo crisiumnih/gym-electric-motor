@@ -33,8 +33,22 @@ WIDTHS = {'128x2': [128, 128], '256x3': [256] * 3, '512x3': [512] * 3}
 PROTOCOL = 'outer-warp-ceiling-v1'
 GAMMA = 0.995
 FAILURE = -5200.0
-WARP_SOURCES = ['tools/outer_warp_ceiling.py', 'warp_spike/backend.py',
-                'warp_spike/fullstep.py', 'warp_spike/vecenv.py']
+WARP_SOURCES = ['tools/outer_warp_ceiling.py']
+WARP_BACKEND_FILES = ['backend.py', 'fullstep.py', 'vecenv.py', 'kernels.py', 'kernels64.py']
+
+
+def warp_backend_root():
+    cand = ROOT / 'third_party' / 'gym-electric-motor'
+    base = Path('/home/sra/prajwal/vroom/warp_backend')
+    return base if base.is_dir() else None
+
+
+def warp_backend_digest():
+    base = warp_backend_root()
+    h = hashlib.sha256()
+    for name in sorted(WARP_BACKEND_FILES):
+        h.update(sha(base / name).encode())
+    return h.hexdigest()
 
 
 def atomic(path, value):
@@ -63,12 +77,11 @@ class Progress(BaseCallback):
         self.started = time.perf_counter()
 
     def _on_step(self):
-        info = self.locals['infos'][0]
-        self.physics += info['physics_steps']
-        if info.get('failure'):
-            self.failures += 1
-        if self.locals['dones'][0]:
-            self.episodes += 1
+        infos = self.locals['infos']
+        dones = self.locals['dones']
+        self.physics += sum(i['physics_steps'] for i in infos)
+        self.failures += sum(1 for i in infos if i.get('failure'))
+        self.episodes += int(np.asarray(dones).sum())
         if self.num_timesteps % self.c['validation_every'] == 0:
             with horizon.environment('g0995'):
                 rows = evaluation.compare(self.model, self.c['plant'], self.c['inner_study'], self.inner,
@@ -101,7 +114,7 @@ def learner(env, widths, seed, cfg):
 
 
 def run_arm(root, label, seed):
-    sys.path.insert(0, '/home/sra/prajwal/vroom')
+    sys.path.insert(0, str(warp_backend_root().parent))
     from warp_backend.vecenv import WarpOuterVecEnv
     root = Path(root)
     p = verify(root)
@@ -117,11 +130,11 @@ def run_arm(root, label, seed):
     for parameter in inner.policy.parameters():
         parameter.requires_grad_(False)
     inner_digest = evaluation.model_digest(inner)
-    case = cfg['training_case']
-    venv = WarpOuterVecEnv(cfg['plant'], cfg['inner_study'], inner_cuda_holder(inner), case, n_envs=1,
+    case = cfg['training_cases']
+    venv = WarpOuterVecEnv(cfg['plant'], cfg['inner_study'], inner_cuda_holder(inner), case[0], n_envs=cfg['n_envs'],
                            seed=seed, reward_shape=cfg['reward'].get('shape', 'l2'),
                            failure=cfg['reward'].get('failure', -1040.0),
-                           effort_scale=cfg['reward'].get('effort_scale', 1.0))
+                           effort_scale=cfg['reward'].get('effort_scale', 1.0), cases=case)
     started = time.perf_counter()
     manifest = dict(status='running', label=label, seed=seed, protocol_sha256=sha(root / 'protocol.json'),
         inner_model_sha256=sha(root / 'inner_model.zip'))
@@ -171,7 +184,9 @@ def inner_cuda_holder(inner_cpu):
 
 def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x3', '512x3'),
             validation_every=50000, max_workers=4, reward_extra=None, protocol_name=None,
-            interpretation_note=''):
+            interpretation_note='', n_envs=8, learner_extra=None):
+    """Budget/validation_every are PER-ENV outer actions (GEM semantics); SB3
+    global counts are scaled by n_envs. Training cycles the 40 GEM cases."""
     import shutil
     output, inner = Path(output).resolve(), Path(inner).resolve()
     widths = list(widths)
@@ -181,6 +196,8 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
         raise ValueError('Invalid widths')
     if not seeds or len(set(seeds)) != len(seeds):
         raise ValueError('Invalid seeds')
+    if n_envs <= 0:
+        raise ValueError('Invalid n_envs')
     if budget <= 0 or validation_every <= 0 or budget % validation_every:
         raise ValueError('Budget must be positive multiple of validation interval')
     m = read(inner / 'manifest.json')
@@ -193,22 +210,25 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
     saved = read(output / 'inner_config.json')
     saved['plant']['controller']['current_reference_limit_a'] = saved['study']['reference_limit_a']
     from tools.outer_rl.study import training_cases, validation_cases
-    case = dict(name='warp_train', duration_s=2.0, reference=[[0., 0.], [.1, 5.0]],
-                disturbance=[[0., 0.], [.8, .01], [1.5, 0.]], stress=False)
-    cfg = dict(protocol='bldc-outer-warp-ceiling-v1', plant=saved['plant'], inner_study=saved['study'],
-        training_case=case, validation_cases=validation_cases(), test_cases=[],
-        learner=dict(gamma=GAMMA, learning_rate=1e-4, batch_size=128, buffer_size=300000, learning_starts=5000,
+    learner_cfg = dict(gamma=GAMMA, learning_rate=1e-4, batch_size=128, buffer_size=300000, learning_starts=5000 * n_envs,
                      tau=.005, train_freq=1, gradient_steps=1, noise_sigma=.05, critic_widths=[256, 256],
-                     device='cuda'),
+                     device='cuda')
+    learner_cfg.update(learner_extra or {})
+    cfg = dict(protocol='bldc-outer-warp-ceiling-v1', plant=saved['plant'], inner_study=saved['study'],
+        training_cases=training_cases(), validation_cases=validation_cases(), test_cases=[],
+        learner=learner_cfg,
         contract=dict(version='bldc-outer-speed-v1', outer_dt_s=.001, inner_dt_s=.0001, hold_steps=10,
                       speed_scale_rad_s=25., current_scale_a=4., reference_limit_a=1.5, memory_time_s=.5,
                       phase_limit_a=4.,
                       features=['speed', 'reference', 'error', 'id', 'iq', 'previous_own_command', 'bounded_error_memory']),
         reward=dict(shape='l1', failure=FAILURE, **(reward_extra or {}),
                     interpretation='L1 absolute tracking + shared failure penalty, g0995 lineage'),
-        validation_every=validation_every, total_timesteps=budget,
+        validation_every=validation_every * n_envs, total_timesteps=budget * n_envs,
+        n_envs=n_envs, per_env_timesteps=budget,
         interpretation=('Warp-training/GEM-validation ceiling screen; gamma .995/L1/-5200 from g0995 winner; '
-                        'longer budget + wider capacity; new lineage, no CPU-run comparison' + interpretation_note))
+                        'longer budget + wider capacity; 8 parallel envs cycling the 40 GEM training cases; '
+                        'budget/validation/starts are per-env, SB3 global counts scaled x8; '
+                        'new lineage, no CPU-run comparison' + interpretation_note))
     save(output / 'config.json', cfg)
     import importlib.metadata
     from benchmarks.bldc.run import provenance
@@ -218,11 +238,11 @@ def prepare(output, inner, budget=500000, seeds=(20, 21), widths=('128x2', '256x
         p['source_sha256'][str(f.relative_to(ROOT))] = sha(f)
     for rel in WARP_SOURCES + ['tools/outer_horizon_study.py', 'tools/outer_reward_study.py']:
         cand = ROOT / rel
-        if not cand.exists():
-            cand = Path('/home/sra/prajwal/vroom/warp_backend') / Path(rel).name
         p['source_sha256']['warp:' + rel] = sha(cand)
+    p['source_sha256']['warp:backend'] = warp_backend_digest()
+    p['warp_backend_root'] = str(warp_backend_root())
     p.update(protocol=protocol_name or PROTOCOL, seeds=list(seeds), widths=widths, max_workers=max_workers,
-        budget=budget, max_outer_actions=len(widths) * len(seeds) * budget,
+        budget=budget, n_envs=n_envs, max_outer_actions=len(widths) * len(seeds) * budget,
         max_training_physics_steps=10 * len(widths) * len(seeds) * budget,
         device=dict(learner='cuda', inner='cuda', physics='warp-cuda', validation='gem-cpu'),
         frozen_files={n: sha(output / n) for n in ['config.json', 'inner_model.zip', 'inner_config.json', 'inner_freeze.json']},
@@ -252,10 +272,12 @@ def verify(output):
         if sha(output / name) != digest:
             raise ValueError(f'Changed frozen input {name}')
     for rel, digest in p['source_sha256'].items():
+        if rel == 'warp:backend':
+            if warp_backend_digest() != digest:
+                raise ValueError(f'Changed source {rel}')
+            continue
         base = rel[5:] if rel.startswith('warp:') else rel
         cand = ROOT / base
-        if not cand.exists():
-            cand = Path('/home/sra/prajwal/vroom/warp_backend') / Path(base).name
         if sha(cand) != digest:
             raise ValueError(f'Changed source {rel}')
     return p
